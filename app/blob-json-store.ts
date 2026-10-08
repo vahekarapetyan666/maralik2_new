@@ -1,46 +1,38 @@
-import { head, list, put } from "@vercel/blob";
+import { BlobNotFoundError, head, put } from "@vercel/blob";
+import { revalidateTag, unstable_cache } from "next/cache";
 import type { JsonStore } from "./json-store";
 
 export function createBlobJsonStore<T>(blobKey: string, fallback: T): JsonStore<T> {
-  // Module-level cache: avoids list() round-trip within the same instance
-  let cachedUrl: string | null = null;
+  const cacheTag = `blob-json:${blobKey}`;
 
-  async function getBlobUrl(): Promise<string | null> {
-    if (cachedUrl) {
-      try {
-        await head(cachedUrl);
-        return cachedUrl;
-      } catch {
-        cachedUrl = null;
-      }
-    }
-    const { blobs } = await list({ prefix: blobKey, limit: 1 });
-    if (blobs.length > 0) {
-      cachedUrl = blobs[0].url;
-      return cachedUrl;
-    }
-    return null;
-  }
-
-  async function read(): Promise<T> {
+  async function readRaw(): Promise<T> {
     try {
-      const url = await getBlobUrl();
-      if (!url) return fallback;
+      const blob = await head(blobKey);
+      const url = new URL(blob.url);
+      url.searchParams.set("v", blob.etag);
       const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return fallback;
+      if (!res.ok) {
+        throw new Error(`Failed to read ${blobKey}: ${res.status}`);
+      }
       return (await res.json()) as T;
-    } catch {
-      return fallback;
+    } catch (error) {
+      if (error instanceof BlobNotFoundError) return fallback;
+      throw error;
     }
   }
+
+  const read = unstable_cache(readRaw, ["blob-json", blobKey], {
+    tags: [cacheTag],
+    revalidate: 86400,
+  });
 
   async function write(value: T): Promise<void> {
-    const blob = await put(blobKey, JSON.stringify(value, null, 2), {
+    await put(blobKey, JSON.stringify(value, null, 2), {
       access: "public",
       addRandomSuffix: false,
       allowOverwrite: true,
     });
-    cachedUrl = blob.url;
+    revalidateTag(cacheTag, { expire: 0 });
   }
 
   async function update(mutator: (current: T) => T | Promise<T>): Promise<T> {

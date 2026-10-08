@@ -1,4 +1,3 @@
-import { unstable_noStore as noStore } from "next/cache";
 import { getTranslations } from "next-intl/server";
 import { groupFilesByYear, type ImportedFile } from "./file-utils";
 import { isImageFile } from "./material-types";
@@ -34,7 +33,6 @@ export async function UserMaterials({
   sectionSlug: string;
   pageSlug: string;
 }) {
-  noStore();
   const t = await getTranslations("userMaterials");
   const entries = await readMaterials();
   const pageEntries = entries.filter(
